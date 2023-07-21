@@ -1,2 +1,2 @@
-# GLM-130B-Pretrain-in-Megatron-DeepSpeed
-GLM-130B Pretrain in Megatron-DeepSpeed for DCU
+# GLM-Pretrain-in-Megatron-DeepSpeed
+GLM Pretrain in Megatron-DeepSpeed for DCU based on [GLM-130B](https://github.com/THUDM/GLM-130B)
