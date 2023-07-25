@@ -110,7 +110,6 @@ export CMD=" \
     --length-per-sample $LENGTH_PER_SAMPLE \
     --seq-length $SEQ_LEN \
     --multitask-ratio 0.05 \
-    --num-workers 1 \
     --data-path $DATA_PATH \
     --skip-train-iteration-range 40701-40900 42401-42600 \
     --save $CHECKPOINT_PATH \

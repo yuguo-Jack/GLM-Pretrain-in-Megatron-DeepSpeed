@@ -42,7 +42,10 @@ To run in distributed mode:
 
 import argparse
 import time
-
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                             os.path.pardir)))
 from megatron import print_rank_0
 from megatron.data import indexed_dataset
 from megatron.data.indexed_dataset import infer_dataset_impl, MMapIndexedDataset, data_file_path, index_file_path, merge_files_dist

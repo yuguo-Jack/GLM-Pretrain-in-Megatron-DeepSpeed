@@ -16,7 +16,6 @@ rm -rf ./hostfile/*
 echo "START TIME: $(date)"
 hostfile=./hostfile/$SLURM_JOB_ID
 scontrol show hostnames $SLURM_JOB_NODELIST > ${hostfile}
-rm `pwd`/hostfile-dl -f
 for i in `cat $hostfile`
 do
     echo ${i} slots=4 >> `pwd`/hostfile/hostfile-dl-$SLURM_JOB_ID
