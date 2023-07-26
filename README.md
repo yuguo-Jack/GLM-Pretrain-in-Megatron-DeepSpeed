@@ -3,7 +3,7 @@ GLM-Pretrain in Megatron-DeepSpeed for DCU based on [GLM-130B](https://github.co
 
 ```
 bash creat-data.sh # 数据预处理
-sbatch dcu_run.sh # GLM-11B in 8 nodes
+sbatch dcu_run.sh # GLM-11B in 32 nodes
 ```
 
 稍后更新更详细的 README
