@@ -1,7 +1,7 @@
 #! /bin/bash
 
 #SBATCH -p wzhdnormal
-#SBATCH -N 8
+#SBATCH -N 32
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=dcu:4
@@ -26,4 +26,5 @@ np=$(($np*4))
 echo $np
 nodename=$(cat $hostfile |sed -n "1p")
 dist_url=`echo $nodename | awk '{print $1}'`
-mpirun -np $np --allow-run-as-root --hostfile hostfile/hostfile-dl-$SLURM_JOB_ID --bind-to none `pwd`/dcu_single.sh $dist_url
+# mpirun -np $np --allow-run-as-root --hostfile hostfile/hostfile-dl-$SLURM_JOB_ID --bind-to none `pwd`/dcu_single.sh $dist_url
+mpirun -np $np -mca pml ob1 -mca btl self,vader,tcp --hostfile hostfile/hostfile-dl-$SLURM_JOB_ID --bind-to none `pwd`/dcu_single.sh $dist_url

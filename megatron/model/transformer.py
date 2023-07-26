@@ -172,6 +172,9 @@ class ParallelAttention(MegatronModule):
         self.layer_number = max(1, layer_number)
         self.attention_type = attention_type
         self.attn_mask_type = attn_mask_type
+        self.num_attention_heads = args.num_attention_heads
+        self.num_key_value_heads = args.num_key_value_heads
+        self.use_gqa = (self.num_attention_heads != self.num_key_value_heads)
 
         projection_size = args.kv_channels * args.num_attention_heads
 
@@ -187,13 +190,35 @@ class ParallelAttention(MegatronModule):
         self.rotary_embedding_2d = args.rotary_embedding_2d
         self.apply_rotary_positional_embedding_kernel = args.apply_rotary_positional_embedding_kernel
 
+        # Per GQA head and per partition values
+        if self.use_gqa:
+            kv_projection_size = args.kv_channels * args.num_key_value_heads
+            self.num_key_value_heads_per_partition = mpu.divide(
+                args.num_key_value_heads, world_size)
+            self.num_key_value_groups = mpu.divide(
+                args.num_attention_heads, args.num_key_value_heads)
+            assert self.hidden_size_per_attention_head == mpu.divide(
+                kv_projection_size, args.num_key_value_heads)
+
         # Strided linear layer.
         if attention_type == AttnType.self_attn:
-            self.query_key_value = mpu.ColumnParallelLinear(
-                args.hidden_size,
-                3 * projection_size,
-                gather_output=False,
-                init_method=init_method)
+            if self.use_gqa:
+                self.query = mpu.ColumnParallelLinear(
+                    args.hidden_size,
+                    projection_size,
+                    gather_output=False,
+                    init_method=init_method)
+                self.key_value = mpu.ColumnParallelLinear(
+                    args.hidden_size,
+                    2 * kv_projection_size,
+                    gather_output=False,
+                    init_method=init_method)
+            else:
+                self.query_key_value = mpu.ColumnParallelLinear(
+                    args.hidden_size,
+                    3 * projection_size,
+                    gather_output=False,
+                    init_method=init_method)
             self.prefix_prompt_length = args.prefix_prompt_length
             self.add_prefix_prompt = False
             if args.prefix_prompt_length is not None and (
@@ -216,7 +241,11 @@ class ParallelAttention(MegatronModule):
 
                 deepnorm_coeff = get_deepnorm_coefficients()
                 with _get_cuda_rng_tracker().fork():
-                    wq, wk, wv = self.query_key_value.weight.chunk(3, dim=0)
+                    if self.use_gqa:
+                        wq = self.query.weight
+                        wk, wv = self.key_value.weight.chunk(2, dim=0)
+                    else:
+                        wq, wk, wv = self.query_key_value.weight.chunk(3, dim=0)
                     mpu.xavier_normal_tensor_parallel_(
                         wq, 1.0, tp_degree=world_size, partition_dim=0
                     )
@@ -297,6 +326,16 @@ class ParallelAttention(MegatronModule):
 
         self.apply_pb_relax = args.apply_pb_relax
         self.pb_relax_alpha = args.pb_relax_alpha
+    
+    def repeat_kv(self, hidden_states, n_rep):
+        slen, batch, num_key_value_heads_per_partition, head_dim = hidden_states.shape
+        if n_rep == 1:
+            return hidden_states
+        hidden_states = hidden_states[:, :, :, None, :].expand(
+            slen, batch, num_key_value_heads_per_partition, n_rep, head_dim)
+        return hidden_states.reshape(slen, batch,
+                                     num_key_value_heads_per_partition * n_rep,
+                                     head_dim)
 
     def forward(self, hidden_states, attention_mask, layer_past=None,
                 get_key_value=False, encoder_output=None, alibi=None,
@@ -307,7 +346,7 @@ class ParallelAttention(MegatronModule):
         # Query, Key, and Value
         # =====================
 
-        if self.attention_type == AttnType.self_attn:
+        if self.attention_type == AttnType.self_attn and not self.use_gqa:
             # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
             mixed_x_layer, _ = self.query_key_value(hidden_states)
 
@@ -321,7 +360,33 @@ class ParallelAttention(MegatronModule):
             (query_layer,
              key_layer,
              value_layer) = mpu.split_tensor_along_last_dim(mixed_x_layer, 3)
+        elif self.attention_type == AttnType.self_attn and self.use_gqa:
+            # Attention head [sq, b, h] --> [sq, b, hp]
+            query_layer, _ = self.query(hidden_states)
+            # [sq, b, hp] --> [sq, b, np, hn]
+            new_tensor_shape = query_layer.size()[:-1] + \
+                (self.num_attention_heads_per_partition,
+                 self.hidden_size_per_attention_head)
+            query_layer = query_layer.view(*new_tensor_shape)
+
+            # Attention heads [sq, b, h] --> [sq, b, (np * 2 * hn)]
+            mixed_kv_layer, _ = self.key_value(hidden_states)
+            # [sq, b, (np * 2 * hn)] --> [sq, b, np, 2 * hn]
+            new_tensor_shape = mixed_kv_layer.size()[:-1] + \
+                (self.num_key_value_heads_per_partition,
+                 2 * self.hidden_size_per_attention_head)
+            mixed_kv_layer = mixed_kv_layer.view(*new_tensor_shape)
+            # [sq, b, np, 2 * hn] --> 2 [sq, b, np, hn]
+            (key_layer,
+             value_layer) = mpu.split_tensor_along_last_dim(
+                 mixed_kv_layer, 2)
+
+            # Repeat kv
+            key_layer = self.repeat_kv(key_layer, self.num_key_value_groups)
+            value_layer = self.repeat_kv(value_layer,
+                                         self.num_key_value_groups)
         else:
+            assert not self.use_gqa, 'GQA + cross-attn not tested yet'
             # Attention heads [sk, b, h] --> [sk, b, (np * 2 * hn)]
             mixed_kv_layer, _ = self.key_value(encoder_output)
 

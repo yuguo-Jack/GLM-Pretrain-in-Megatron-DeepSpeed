@@ -16,25 +16,23 @@ TENSORBOARD_PATH=./output_dir/$NAME
 config_json="./ds-configs/ds_config.json"
 
 MICRO_BATCH_SIZE=1
-GLOBAL_BATCH_SIZE=32 # 176 * 24
+GLOBAL_BATCH_SIZE=128 # acc*dp*bs 4*4 * 8 * 1
 
 TP_SIZE=4
 PP_SIZE=4
 
-#NHIDDEN=12288
 NHIDDEN=4096
-# FFN_HIDDEN=$((NHIDDEN * 8 / 3))
 FFN_HIDDEN=16384
-# NLAYERS=70
-# NHEADS=96
 NLAYERS=32
 NHEADS=32
+NUM_KV_HEADS=4
+
 LENGTH_PER_SAMPLE=2000 # sequence length per sample from BinaryDataset
 SEQ_LEN=2048 # actual length during training (pad to this)
 
 SAVE_INTERVAL=100
 
-TRAIN_TOKENS=7746744320 # 450B tokens
+TRAIN_TOKENS=7746744320 # tokens
 TRAIN_SAMPLES=$((TRAIN_TOKENS / SEQ_LEN))
 LR_DECAY_SAMPLES=$((TRAIN_SAMPLES * 90 / 100))  # Decay for the first 90% tokens then continue at fixed --min-lr
 LR_WARMUP_SAMPLES=$((TRAIN_SAMPLES * 5 / 1000))  # 0.5% warmup
@@ -77,6 +75,7 @@ GLM_ARGS="
     --num-layers $NLAYERS \
     --hidden-size $NHIDDEN \
     --num-attention-heads $NHEADS \
+    --num-key-value-heads $NUM_KV_HEADS \
     --make-vocab-size-divisible-by 768 \
     --glm \
     --gpt-prob 0.7 \
@@ -109,7 +108,6 @@ export CMD=" \
     --train-samples $TRAIN_SAMPLES \
     --length-per-sample $LENGTH_PER_SAMPLE \
     --seq-length $SEQ_LEN \
-    --multitask-ratio 0.05 \
     --data-path $DATA_PATH \
     --skip-train-iteration-range 40701-40900 42401-42600 \
     --save $CHECKPOINT_PATH \

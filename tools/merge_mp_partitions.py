@@ -224,6 +224,8 @@ def main():
     print('    hidden size ..................... {}'.format(args.hidden_size))
     print('    number of attention heads ....... {}'.format(
         args.num_attention_heads))
+    print('    number of key value heads ....... {}'.format(
+        args.num_key_value_heads))
     print('    maximum position embeddings ..... {}'.format(
         args.max_position_embeddings))
 

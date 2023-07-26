@@ -340,6 +340,13 @@ def parse_args(extra_args_provider=None, defaults={},
 
     assert not (args.unified_multitask_encoding and args.adaptive_multitask_encoding)
 
+    # GQA
+    if args.num_key_value_heads is None:
+        args.num_key_value_heads = args.num_attention_heads
+    assert args.num_attention_heads % args.num_key_value_heads == 0, \
+        f"num_attention_heads must be divisible by num_key_value_heads (got `num_attention_heads`: {args.num_attention_heads} " \
+        f"and `num_key_value_heads`: {args.num_key_value_heads})."
+
     _print_args(args)
     return args
 
@@ -382,6 +389,12 @@ def _add_network_size_args(parser):
                        'This is set to 4*hidden-size if not provided')
     group.add_argument('--num-attention-heads', type=int, default=None,
                        help='Number of transformer attention heads.')
+    group.add_argument('--num-key-value-heads', type=int, default=None,
+                       help='Number of key_value heads that should be used to implement Grouped Query Attention.'
+                       'If num_key_value_heads=num_attention_heads, the model will use Multi Head Attention (MHA).'
+                       'If num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used.'
+                       'For more details checkout [this paper](https://arxiv.org/pdf/2305.13245.pdf).'
+                       'If it is not specified, will default to num_attention_heads')
     group.add_argument('--kv-channels', type=int, default=None,
                        help='Projection weights dimension in multi-head '
                        'attention. This is set to '
