@@ -16,7 +16,7 @@ TENSORBOARD_PATH=./output_dir/$NAME
 config_json="./ds-configs/ds_config.json"
 
 MICRO_BATCH_SIZE=1
-GLOBAL_BATCH_SIZE=128 # acc*dp*bs 4*4 * 8 * 1
+GLOBAL_BATCH_SIZE=512 # acc * dp * bs    16*4 * 8 * 1
 
 TP_SIZE=4
 PP_SIZE=4
@@ -104,7 +104,7 @@ export CMD=" \
     $GLM_ARGS \
     --micro-batch-size $MICRO_BATCH_SIZE \
     --global-batch-size $GLOBAL_BATCH_SIZE \
-    --rampup-batch-size 8 2 $BATCH_WARMUP_SAMPLES \
+    --rampup-batch-size 8 4 $BATCH_WARMUP_SAMPLES \
     --train-samples $TRAIN_SAMPLES \
     --length-per-sample $LENGTH_PER_SAMPLE \
     --seq-length $SEQ_LEN \
