@@ -42,3 +42,9 @@ sbatch dcu_run.sh
 ```
 
 稍后更新精度。
+
+## 参考
+
+[Megatron-DeepSpeed](https://github.com/microsoft/Megatron-DeepSpeed)
+
+[GLM-130B](https://github.com/THUDM/GLM-130B)
