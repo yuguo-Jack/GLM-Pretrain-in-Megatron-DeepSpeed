@@ -11,14 +11,12 @@ GLM 模型采用了一种自回归的空白填充方法, 在 NLP 领域三种主
 
 ```
 wget https://huggingface.co/bigscience/misc-test-data/resolve/main/stas/oscar-1GB.jsonl.xz
-wget https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-vocab.json
-wget https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-merges.txt
 xz -d oscar-1GB.jsonl.xz
 ```
 
 ## GLM 预训练
 
-要求 DCU 集群 Slurm ，MPI 环境正常，使用 [DTK22.10.1]([资源工具 – 光合开发者社区 (hpccube.com)](https://developer.hpccube.com/tool/))。
+要求 DCU 集群 Slurm ，MPI 环境正常，使用 [DTK22.10.1](https://developer.hpccube.com/tool/)。
 
 推荐用户使用预编译好的 Python3.7 包来快速建立 Python3 虚拟环境，Pytorch、Apex、Torchvision、Deepspeed 需要在[光合开发者社区](https://cancon.hpccube.com:65024/4/main/)下载所需 DCU 版本安装包。可以参考以下流程：
 
