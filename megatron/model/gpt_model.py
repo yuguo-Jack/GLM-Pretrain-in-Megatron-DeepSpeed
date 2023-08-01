@@ -34,6 +34,7 @@ from megatron.model.module import float16_to_fp32
 from .language_model import EmbeddingPipe
 from .transformer import ParallelTransformerLayerPipe, GatedAttentionUnitPipe
 
+from apex.normalization import MixedFusedRMSNorm as RMSNorm
 
 def post_language_model_processing(lm_output, labels, logit_weights,
                                    get_key_value, parallel_output,
@@ -278,10 +279,13 @@ class GPTModelPipe(PipelineModule,MegatronModule):
         self.specs.append(lambda x: x.transpose(0, 1).contiguous())
 
         # Final layernorm after transformer layers
-        self.specs.append(
-            LayerSpec(LayerNorm,
-                      args.hidden_size,
-                      eps=args.layernorm_epsilon))
+        if args.normalization == 'layernorm':
+            self.specs.append(
+                LayerSpec(LayerNorm,
+                        args.hidden_size,
+                        eps=args.layernorm_epsilon))
+        else:
+            self.specs.append(LayerSpec(RMSNorm, args.hidden_size, args.layernorm_epsilon))
 
         def _logits_helper(embedding, lm_output):
             """A wrapper to massage inputs/outputs from pipeline. """

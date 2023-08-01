@@ -85,6 +85,7 @@ GLM_ARGS="
     --average-block-length 3 \
     --min-gmask-ratio 0.2 \
     --aggregated-samples-per-sequence 4 \
+    --normalization layernorm \
     --deepnorm \
     --position-embedding-type rotary \
     --ffn-hidden-size $FFN_HIDDEN \

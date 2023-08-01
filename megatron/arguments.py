@@ -410,6 +410,11 @@ def _add_network_size_args(parser):
                        help='Pad the vocab size to this value.'
                        'This value must be greater than the initial size of the tokenizer'
                        ', needs to be divisible by TP size and `make-vocab-size-divisible-by`.')
+    group.add_argument('--normalization', type=str, default='layernorm',
+                       choices=['layernorm', 'rmsnorm'],
+                       help='Options for layer normalization type:'
+                            '  layernorm'
+                            '  rmsnorm')
     group.add_argument('--layernorm-epsilon', type=float, default=1e-5,
                        help='Layer norm epsilon.')
     group.add_argument('--apply-residual-connection-post-layernorm',

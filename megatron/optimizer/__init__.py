@@ -19,6 +19,7 @@ from apex.optimizers import FusedLAMB as LAMB
 
 from megatron import get_args
 from megatron.model.fused_layer_norm import MixedFusedLayerNorm as LayerNorm
+from apex.normalization import MixedFusedRMSNorm as RMSNorm
 
 from .grad_scaler import ConstantGradScaler, DynamicGradScaler
 from .optimizer import Float16OptimizerWithFloat16Params, FP32Optimizer
@@ -33,7 +34,7 @@ def _get_params_for_weight_decay_optimization(modules):
     no_weight_decay_params = {'params': [], 'weight_decay': 0.0}
     for module in modules:
         for module_ in module.modules():
-            if isinstance(module_, LayerNorm):
+            if isinstance(module_, LayerNorm) or isinstance(module_, RMSNorm):
                 no_weight_decay_params['params'].extend(
                     [p for p in list(module_._parameters.values())
                      if p is not None and p.requires_grad])

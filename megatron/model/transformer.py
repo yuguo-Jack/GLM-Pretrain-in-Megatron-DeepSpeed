@@ -39,6 +39,7 @@ from .positional_embeddings import apply_rotary_pos_emb_torch, apply_rotary_pos_
 from .gau import GatedAttentionUnit
 
 from lightop import op
+from apex.normalization import MixedFusedRMSNorm as RMSNorm
 
 # flags required to enable jit fusion kernels
 torch._C._jit_set_profiling_mode(False)
@@ -685,9 +686,12 @@ class ParallelTransformerLayer(MegatronModule):
         self.deepnorm_coeff = get_deepnorm_coefficients()
 
         # Layernorm on the input data.
-        self.input_layernorm = LayerNorm(
-            args.hidden_size,
-            eps=args.layernorm_epsilon)
+        if args.normalization == 'layernorm':
+            self.input_layernorm = LayerNorm(
+                args.hidden_size,
+                eps=args.layernorm_epsilon)
+        else:
+            self.input_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
 
         # Self attention.
         self.self_attention = ParallelAttention(
@@ -700,9 +704,12 @@ class ParallelTransformerLayer(MegatronModule):
         self.bias_dropout_fusion = args.bias_dropout_fusion
 
         # Layernorm on the attention output
-        self.post_attention_layernorm = LayerNorm(
-            args.hidden_size,
-            eps=args.layernorm_epsilon)
+        if args.normalization == 'layernorm':
+            self.post_attention_layernorm = LayerNorm(
+                args.hidden_size,
+                eps=args.layernorm_epsilon)
+        else:
+            self.post_attention_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
 
         if self.layer_type == LayerType.decoder:
             self.inter_attention = ParallelAttention(
@@ -711,9 +718,12 @@ class ParallelTransformerLayer(MegatronModule):
                 layer_number,
                 attention_type=AttnType.cross_attn)
             # Layernorm on the attention output.
-            self.post_inter_attention_layernorm = LayerNorm(
-                args.hidden_size,
-                eps=args.layernorm_epsilon)
+            if args.normalization == 'layernorm':
+                self.post_inter_attention_layernorm = LayerNorm(
+                    args.hidden_size,
+                    eps=args.layernorm_epsilon)
+            else:
+                self.post_inter_attention_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
 
         # MLP
         self.mlp = ParallelMLP(init_method, output_layer_init_method)
@@ -732,10 +742,14 @@ class ParallelTransformerLayer(MegatronModule):
 
         self.apply_scale_normalization = args.sandwich_ln
         if self.apply_scale_normalization:
-            self.third_layernorm = LayerNorm(args.hidden_size,
-                                             eps=args.layernorm_epsilon)
-            self.fourth_layernorm = LayerNorm(args.hidden_size,
-                                              eps=args.layernorm_epsilon)
+            if args.normalization == 'layernorm':
+                self.third_layernorm = LayerNorm(args.hidden_size,
+                                                eps=args.layernorm_epsilon)
+                self.fourth_layernorm = LayerNorm(args.hidden_size,
+                                                eps=args.layernorm_epsilon)
+            else:
+                self.third_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
+                self.fourth_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
 
     def forward(self, hidden_states, attention_mask,
                 encoder_output=None, enc_dec_attn_mask=None,
@@ -1031,9 +1045,12 @@ class ParallelTransformer(MegatronModule):
 
         if self.post_process:
             # Final layer norm before output.
-            self.final_layernorm = LayerNorm(
-                args.hidden_size,
-                eps=args.layernorm_epsilon)
+            if args.normalization == 'layernorm':
+                self.final_layernorm = LayerNorm(
+                    args.hidden_size,
+                    eps=args.layernorm_epsilon)
+            else:
+                self.final_layernorm = RMSNorm(args.hidden_size, args.layernorm_epsilon)
 
         if deepspeed.checkpointing.is_configured():
             global get_cuda_rng_tracker, checkpoint
