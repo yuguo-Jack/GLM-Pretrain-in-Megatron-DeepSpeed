@@ -88,6 +88,7 @@ GLM_ARGS="
     --normalization layernorm \
     --deepnorm \
     --position-embedding-type rotary \
+    --apply-rotary-positional-embedding-kernel \
     --ffn-hidden-size $FFN_HIDDEN \
     --glu-activation geglu \
     --no-bias-gelu-fusion \

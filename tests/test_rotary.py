@@ -30,8 +30,7 @@ def load():
             sources=sources,
             build_directory=buildpath,
             extra_cflags=['-O3',],
-            extra_cuda_cflags=['-O3',
-                               '--use_fast_math'] + extra_cuda_flags,
+            extra_cuda_cflags=['-O3'] + extra_cuda_flags,
             verbose=True
         )
                                # '-gencode', 'arch=compute_70,code=sm_70',
@@ -214,7 +213,7 @@ if __name__ == '__main__':
         return ((x1 - x2) / (x1 + x2 + 1e-6)).abs().max()
 
     print(((q1 - q2).abs().max()))
-    # print(q2)
+    print(((k1 - k2).abs().max()))
 
     print(
         f"element-wise relative error max: q: {rerr(q1, q2)}, k: {rerr(k1, k2)}")
