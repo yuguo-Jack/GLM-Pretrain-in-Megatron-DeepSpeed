@@ -17,7 +17,7 @@
 #pragma once
 
 #include <assert.h>
-#define __HIP_PLATFORM_HCC__
+// #include <cuda_fp16.h>
 #include <hip/hip_fp16.h>
 #include <cfloat>
 #include <limits>
@@ -89,7 +89,7 @@ template <typename T>
 __device__ __forceinline__ T WARP_SHFL_XOR_NATIVE(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff)
 {
 #if CUDA_VERSION >= 9000
-    return __shfl_xor(value, laneMask, width);
+    return __shfl_xor_sync(mask, value, laneMask, width);
 #else
     return __shfl_xor(value, laneMask, width);
 #endif

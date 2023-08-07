@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define __HIP_PLATFORM_HCC__
+// #include <cuda_fp16.h>
 #include <hip/hip_fp16.h>
 #include <torch/extension.h>
 #include <vector>

@@ -89,6 +89,17 @@ def load(args):
              srcpath / 'layer_norm_cuda_kernel.cu']
     fused_mix_prec_layer_norm_cuda = _cpp_extention_load_helper(
         "fused_mix_prec_layer_norm_cuda", sources, extra_cuda_flags)
+    
+    # =================================
+    # Rotary positonal embedding/
+    # =================================
+    
+    if args.apply_rotary_positional_embedding_kernel:
+        extra_cuda_flags = []
+        sources=[srcpath / 'rotary_positional_embedding.cpp',
+                 srcpath / 'rotary_positional_embedding.cu']
+        rotary_positional_embedding_cuda = _cpp_extention_load_helper(
+            "rotary_positional_embedding_cuda", sources, extra_cuda_flags)
 
 
 def _get_cuda_bare_metal_version(cuda_dir):
