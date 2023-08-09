@@ -15,102 +15,131 @@
  * limitations under the License.
  */
 
-#include <cfloat>
 #include <limits>
 #include <stdint.h>
-#include <c10/macros/Macros.h>
 #include <ATen/ATen.h>
-#include <ATen/Utils.h>
+#include <ATen/AccumulateType.h>
+#include <ATen/cuda/CUDAApplyUtils.cuh>
+#include <ATen/CUDAGeneratorImpl.h>
+#include <ATen/cuda/detail/IndexUtils.cuh>
+#include <ATen/cuda/detail/TensorInfo.cuh>
+#include <ATen/cuda/CUDAGraphsUtils.cuh>
+#include <c10/macros/Macros.h>
+#include <hiprand_kernel.h>
+#include <ATen/native/TensorIterator.h>
+#include <ATen/native/cuda/Loops.cuh>
+#include <ATen/native/cuda/MemoryAccess.cuh>
+#include <thrust/pair.h>
+#include <THC/THCGeneral.h>
+#include <torch/extension.h>
+#include <c10/cuda/CUDAMathCompat.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <torch/autograd.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
-// #include <cuda_profiler_api.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <torch/extension.h>
 #include "type_shim.h"
 
-#define A(i, j, k, r) A[i * b * np * hn + j * np * hn + k * hn + r]
-#define B(i, j, r) B[i * b * hn + j * hn + r]
-#define C(i, j, r) C[i * b * hn + j * hn + r]
-#define res(i, j, k, r) res[i * b * np * hn + j * np * hn + k * hn + r]
-#define res_grad(i, j, k, r) \
-    res_grad[i * b * np * hn + j * np * hn + k * hn + r]
-#define grad_out(i, j, k, r) \
-    grad_out[i * b * np * hn + j * np * hn + k * hn + r]
+#define Q(sq_id, b_id, head_id, hn_id) Q[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
+#define cos(sq_id, b_id, hn_id) cos[sq_id * b * hn + b_id * hn + hn_id]
+#define sin(sq_id, b_id, hn_id) sin[sq_id * b * hn + b_id * hn + hn_id]
+#define q_emb(sq_id, b_id, head_id, hn_id) q_emb[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
 
-const int block_np = 16, block_hn = 16;
+#define res_grad(sq_id, b_id, head_id, hn_id) \
+        res_grad[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
+#define grad_out(sq_id, b_id, head_id, hn_id) \
+        grad_out[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
 
-template <typename U>
-__global__ __global__ void tensorMult_gpu(int sq, int b, int np, int hn,
-                                          const U* A, const U* B, const U* C,
-                                          U* res) {
-    int i = blockIdx.x, j = blockIdx.y;
-    int k0 = threadIdx.y, r0 = threadIdx.x;
-    for (int k = k0; k < np; k += 16) {
-        for (int r = r0; r < hn; r += 16) {
-            U temp = (r + hn / 2 < hn) ? -A(i, j, k, r + hn / 2)
-                                       : A(i, j, k, r + hn / 2 - hn);
-            res(i, j, k, r) = A(i, j, k, r) * B(i, j, r) + temp * C(i, j, r);
+#define BLOCK_NP 16
+#define BLOCK_HN 64 // BLOCK_HN * CYCLE = HN (128) = HIDDEN / NHEADS
+
+template <typename scalar_t>
+__global__ void RoPE_gpu_kernel(int sq, int b, int np, int hn,
+                                const scalar_t* Q, const scalar_t* cos, const scalar_t* sin,
+                                scalar_t* q_emb) {
+    int sq_id = blockIdx.x, b_id = blockIdx.y;
+    int np_id = threadIdx.y, hn_cid = threadIdx.x;
+    __shared__ scalar_t cos_shared[BLOCK_HN];
+    __shared__ scalar_t sin_shared[BLOCK_HN];
+    __shared__ scalar_t q_shared[BLOCK_NP][BLOCK_HN];
+    __shared__ scalar_t q_shared_rotate[BLOCK_NP][BLOCK_HN];
+    #pragma unroll
+    for (int head_id = np_id; head_id < np; head_id += BLOCK_NP) {
+      #pragma unroll
+        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN) {
+            cos_shared[hn_cid] = cos(sq_id, b_id, hn_id);
+            sin_shared[hn_cid] = sin(sq_id, b_id, hn_id);
+            q_shared[np_id][hn_cid] = Q(sq_id, b_id, head_id, hn_id);
+            q_shared_rotate[np_id][hn_cid] = (hn_id + hn / 2 < hn) ? -Q(sq_id, b_id, head_id, hn_id + hn / 2) : Q(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            q_emb(sq_id, b_id, head_id, hn_id) = q_shared[np_id][hn_cid] * cos_shared[hn_cid] + q_shared_rotate[np_id][hn_cid] * sin_shared[hn_cid];
         }
     }
 }
 
-template <typename U>
-void host_apply_tensorMult_gpu(int sq, int b, int np, int hn, const U* A,
-                               const U* B, const U* C, U* res) {
+template <typename scalar_t>
+void host_apply_RoPE_gpu(int sq, int b, int np, int hn,
+                         const scalar_t* Q, const scalar_t* cos,
+                         const scalar_t* sin, scalar_t* q_emb) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
+
     dim3 blocks(sq, b);
-    dim3 threads(block_hn, block_np);
-    tensorMult_gpu<<<blocks, threads, 0, stream>>>(sq, b, np, hn, A,
-                                                              B, C, res);
+    dim3 threads(BLOCK_HN, BLOCK_NP);
+
+    RoPE_gpu_kernel<scalar_t><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
 }
 
-void tensorMult_gpu_launch(int sq, int b, int np, int hn, at::Tensor* A,
-                           at::Tensor* B, at::Tensor* C, at::Tensor* res) {
+void RoPE_gpu_launch(int sq, int b, int np, int hn, at::Tensor* Q,
+                     at::Tensor* cos, at::Tensor* sin, at::Tensor* q_emb) {
     DISPATCH_FLOAT_HALF_AND_BFLOAT_TYPES(
-        B->scalar_type(), "forward_gpu",
-        host_apply_tensorMult_gpu(
-            sq, b, np, hn, A->data_ptr<scalar_t>(), B->data_ptr<scalar_t>(),
-            C->data_ptr<scalar_t>(), res->data_ptr<scalar_t>());)
+        cos->scalar_type(), "RoPE_forward_gpu",
+        host_apply_RoPE_gpu(
+            sq, b, np, hn, Q->data_ptr<scalar_t>(),
+            cos->data_ptr<scalar_t>(), sin->data_ptr<scalar_t>(), q_emb->data_ptr<scalar_t>());)
 }
 
-template <typename U>
-__global__ __global__ void tensorMult_backward_gpu(int sq, int b, int np,
-                                                   int hn, const U* grad_out,
-                                                   const U* B, const U* C,
-                                                   U* res_grad) {
-    int i = blockIdx.x, j = blockIdx.y;
-    int k0 = threadIdx.y, r0 = threadIdx.x;
-    for (int k = k0; k < np; k += 16) {
-        for (int r = r0; r < hn; r += 16) {
-            U temp1 = (r + hn / 2 < hn) ? grad_out(i, j, k, r + hn / 2)
-                                        : grad_out(i, j, k, r + hn / 2 - hn);
-            U temp2 = (r + hn / 2 < hn) ? C(i, j, r + hn / 2)
-                                        : -C(i, j, r + hn / 2 - hn);
-            res_grad(i, j, k, r) =
-                grad_out(i, j, k, r) * B(i, j, r) + temp1 * temp2;
+template <typename scalar_t>
+__global__ void RoPE_backward_gpu_kernel(int sq, int b, int np,
+                                         int hn, const scalar_t* grad_out,
+                                         const scalar_t* cos, const scalar_t* sin,
+                                         scalar_t* res_grad) {
+    int sq_id = blockIdx.x, b_id = blockIdx.y;
+    int np_id = threadIdx.y, hn_cid = threadIdx.x;
+    __shared__ scalar_t cos_shared[BLOCK_HN];
+    __shared__ scalar_t sin_shared[BLOCK_HN];
+    __shared__ scalar_t grad_out_shared[BLOCK_NP][BLOCK_HN];
+    __shared__ scalar_t grad_out_shared_rotate[BLOCK_NP][BLOCK_HN];
+    #pragma unroll
+    for (int head_id = np_id; head_id < np; head_id += BLOCK_NP) {
+        #pragma unroll
+        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN) {
+            cos_shared[hn_cid] = cos(sq_id, b_id, hn_id);
+            sin_shared[hn_cid] = (hn_id + hn / 2 < hn) ? sin(sq_id, b_id, hn_id + hn / 2) : -sin(sq_id, b_id, hn_id + hn / 2 - hn);
+            grad_out_shared[np_id][hn_cid] = grad_out(sq_id, b_id, head_id, hn_id);
+            grad_out_shared_rotate[np_id][hn_cid] = (hn_id + hn / 2 < hn) ? grad_out(sq_id, b_id, head_id, hn_id + hn / 2) : grad_out(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            res_grad(sq_id, b_id, head_id, hn_id) = grad_out_shared[np_id][hn_cid] * cos_shared[hn_cid] + grad_out_shared_rotate[np_id][hn_cid] * sin_shared[hn_cid];
         }
     }
 }
 
-template <typename U>
-void host_apply_tensorMult_backward_gpu(int sq, int b, int np, int hn,
-                                        const U* grad_out, const U* B,
-                                        const U* C, U* res_grad) {
+template <typename scalar_t>
+void host_apply_RoPE_backward_gpu(int sq, int b, int np, int hn,
+                                  const scalar_t* grad_out, const scalar_t* cos,
+                                  const scalar_t* sin, scalar_t* res_grad) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
+
     dim3 blocks(sq, b);
-    dim3 threads(block_hn, block_np);
-    tensorMult_backward_gpu<<<blocks, threads, 0, stream>>>(
-        sq, b, np, hn, grad_out, B, C, res_grad);
+    dim3 threads(BLOCK_HN, BLOCK_NP);
+
+    RoPE_backward_gpu_kernel<scalar_t><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
 }
 
-void tensorMult_backward_gpu_launch(int sq, int b, int np, int hn,
-                                    at::Tensor* grad_out, at::Tensor* B,
-                                    at::Tensor* C, at::Tensor* res_grad) {
+void RoPE_backward_gpu_launch(int sq, int b, int np, int hn,
+                              at::Tensor* grad_out, at::Tensor* cos,
+                              at::Tensor* sin, at::Tensor* res_grad) {
     DISPATCH_FLOAT_HALF_AND_BFLOAT_TYPES(
-        B->scalar_type(), "backward_gpu",
-        host_apply_tensorMult_backward_gpu(
+        cos->scalar_type(), "RoPE_backward_gpu",
+        host_apply_RoPE_backward_gpu(
             sq, b, np, hn, grad_out->data_ptr<scalar_t>(),
-            B->data_ptr<scalar_t>(), C->data_ptr<scalar_t>(),
+            cos->data_ptr<scalar_t>(), sin->data_ptr<scalar_t>(),
             res_grad->data_ptr<scalar_t>());)
 }

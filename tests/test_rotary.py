@@ -184,8 +184,8 @@ if __name__ == '__main__':
         loss = 12 * (q2.mean() + k2.mean()) ** 2
         loss.backward()
     gradq2, gradk2 = q.grad, k.grad
-    end.record()
     torch.cuda.synchronize()
+    end.record()
 
     print(f"custom_kernel time {start.elapsed_time(end)} ms")
 
@@ -197,8 +197,8 @@ if __name__ == '__main__':
         loss = 12 * (q1.mean() + k1.mean()) ** 2
         loss.backward()
     gradq1, gradk1 = q.grad, k.grad
-    end.record()
     torch.cuda.synchronize()
+    end.record()
 
     print(f"jit time {start.elapsed_time(end)} ms")
 
