@@ -40,38 +40,42 @@
 #include <cuda_fp16.h>
 #include "type_shim.h"
 
-#define Q(sq_id, b_id, head_id, hn_id) Q[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
-#define cos(sq_id, b_id, hn_id) cos[sq_id * b * hn + b_id * hn + hn_id]
-#define sin(sq_id, b_id, hn_id) sin[sq_id * b * hn + b_id * hn + hn_id]
-#define q_emb(sq_id, b_id, head_id, hn_id) q_emb[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
+#define Q(sq_id, b_id, head_id, hn_id) (Q + sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id)
+#define cos(sq_id, b_id, hn_id) (cos + sq_id * b * hn + b_id * hn + hn_id)
+#define sin(sq_id, b_id, hn_id) (sin + sq_id * b * hn + b_id * hn + hn_id)
+#define q_emb(sq_id, b_id, head_id, hn_id) (q_emb + sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id)
 
 #define res_grad(sq_id, b_id, head_id, hn_id) \
-        res_grad[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
+        (res_grad + sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id)
 #define grad_out(sq_id, b_id, head_id, hn_id) \
-        grad_out[sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id]
+        (grad_out + sq_id * b * np * hn + b_id * np * hn + head_id * hn + hn_id)
 
-#define BLOCK_NP 16
-#define BLOCK_HN 64 // BLOCK_HN * CYCLE = HN (128) = HIDDEN / NHEADS
 
-template <typename scalar_t>
+
+template <typename scalar_t, int BLOCK_NP, int BLOCK_HN, int VEC>
 __global__ void RoPE_gpu_kernel(int sq, int b, int np, int hn,
                                 const scalar_t* Q, const scalar_t* cos, const scalar_t* sin,
                                 scalar_t* q_emb) {
+    using LoadT = at::native::memory::aligned_vector<scalar_t, VEC>;
     int sq_id = blockIdx.x, b_id = blockIdx.y;
-    int np_id = threadIdx.y, hn_cid = threadIdx.x;
-    __shared__ scalar_t cos_shared[BLOCK_HN];
-    __shared__ scalar_t sin_shared[BLOCK_HN];
-    __shared__ scalar_t q_shared[BLOCK_NP][BLOCK_HN];
-    __shared__ scalar_t q_shared_rotate[BLOCK_NP][BLOCK_HN];
+    int np_id = threadIdx.y, hn_cid = threadIdx.x * VEC;
+    scalar_t v_cos[VEC];
+    scalar_t v_sin[VEC];
+    scalar_t v_q[VEC];
+    scalar_t v_q_rotate[VEC];
+    scalar_t v_q_emb[VEC];
     #pragma unroll
     for (int head_id = np_id; head_id < np; head_id += BLOCK_NP) {
-      #pragma unroll
-        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN) {
-            cos_shared[hn_cid] = cos(sq_id, b_id, hn_id);
-            sin_shared[hn_cid] = sin(sq_id, b_id, hn_id);
-            q_shared[np_id][hn_cid] = Q(sq_id, b_id, head_id, hn_id);
-            q_shared_rotate[np_id][hn_cid] = (hn_id + hn / 2 < hn) ? -Q(sq_id, b_id, head_id, hn_id + hn / 2) : Q(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
-            q_emb(sq_id, b_id, head_id, hn_id) = q_shared[np_id][hn_cid] * cos_shared[hn_cid] + q_shared_rotate[np_id][hn_cid] * sin_shared[hn_cid];
+        #pragma unroll
+        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN * VEC) {
+            *(LoadT*)v_cos = *(LoadT*)cos(sq_id, b_id, hn_id);
+            *(LoadT*)v_sin = *(LoadT*)sin(sq_id, b_id, hn_id);
+            *(LoadT*)v_q = *(LoadT*)Q(sq_id, b_id, head_id, hn_id);
+            *(LoadT*)v_q_rotate = (hn_id + hn / 2 < hn) ? *(LoadT*)Q(sq_id, b_id, head_id, hn_id + hn / 2) : *(LoadT*)Q(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            for (int vec_id = 0; vec_id < VEC; vec_id++) {
+                v_q_emb[vec_id] = v_q[vec_id] * v_cos[vec_id] + ((hn_id + hn / 2 < hn) ? -v_q_rotate[vec_id] : v_q_rotate[vec_id]) * v_sin[vec_id];
+            }
+            *(LoadT*)q_emb(sq_id, b_id, head_id, hn_id) = *(LoadT*)v_q_emb;
         }
     }
 }
@@ -81,11 +85,17 @@ void host_apply_RoPE_gpu(int sq, int b, int np, int hn,
                          const scalar_t* Q, const scalar_t* cos,
                          const scalar_t* sin, scalar_t* q_emb) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
-
     dim3 blocks(sq, b);
-    dim3 threads(BLOCK_HN, BLOCK_NP);
 
-    RoPE_gpu_kernel<scalar_t><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
+    if(np <= 16) {
+        dim3 threads(16, 16);
+        RoPE_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
+    } else {
+        dim3 threads(32, 32);
+        RoPE_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
+    }
+
+    
 }
 
 void RoPE_gpu_launch(int sq, int b, int np, int hn, at::Tensor* Q,
@@ -97,26 +107,31 @@ void RoPE_gpu_launch(int sq, int b, int np, int hn, at::Tensor* Q,
             cos->data_ptr<scalar_t>(), sin->data_ptr<scalar_t>(), q_emb->data_ptr<scalar_t>());)
 }
 
-template <typename scalar_t>
+template <typename scalar_t, int BLOCK_NP, int BLOCK_HN, int VEC>
 __global__ void RoPE_backward_gpu_kernel(int sq, int b, int np,
                                          int hn, const scalar_t* grad_out,
                                          const scalar_t* cos, const scalar_t* sin,
                                          scalar_t* res_grad) {
+    using LoadT = at::native::memory::aligned_vector<scalar_t, VEC>;
     int sq_id = blockIdx.x, b_id = blockIdx.y;
-    int np_id = threadIdx.y, hn_cid = threadIdx.x;
-    __shared__ scalar_t cos_shared[BLOCK_HN];
-    __shared__ scalar_t sin_shared[BLOCK_HN];
-    __shared__ scalar_t grad_out_shared[BLOCK_NP][BLOCK_HN];
-    __shared__ scalar_t grad_out_shared_rotate[BLOCK_NP][BLOCK_HN];
+    int np_id = threadIdx.y, hn_cid = threadIdx.x * VEC;
+    scalar_t v_cos[VEC];
+    scalar_t v_sin[VEC];
+    scalar_t v_grad_out[VEC];
+    scalar_t v_grad_out_rotate[VEC];
+    scalar_t v_res_grad[VEC];
     #pragma unroll
     for (int head_id = np_id; head_id < np; head_id += BLOCK_NP) {
         #pragma unroll
-        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN) {
-            cos_shared[hn_cid] = cos(sq_id, b_id, hn_id);
-            sin_shared[hn_cid] = (hn_id + hn / 2 < hn) ? sin(sq_id, b_id, hn_id + hn / 2) : -sin(sq_id, b_id, hn_id + hn / 2 - hn);
-            grad_out_shared[np_id][hn_cid] = grad_out(sq_id, b_id, head_id, hn_id);
-            grad_out_shared_rotate[np_id][hn_cid] = (hn_id + hn / 2 < hn) ? grad_out(sq_id, b_id, head_id, hn_id + hn / 2) : grad_out(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
-            res_grad(sq_id, b_id, head_id, hn_id) = grad_out_shared[np_id][hn_cid] * cos_shared[hn_cid] + grad_out_shared_rotate[np_id][hn_cid] * sin_shared[hn_cid];
+        for(int hn_id = hn_cid; hn_id < hn; hn_id += BLOCK_HN * VEC) {
+            *(LoadT*)v_cos = *(LoadT*)cos(sq_id, b_id, hn_id);
+            *(LoadT*)v_sin = (hn_id + hn / 2 < hn) ? *(LoadT*)sin(sq_id, b_id, hn_id + hn / 2) : *(LoadT*)sin(sq_id, b_id, hn_id + hn / 2 - hn);
+            *(LoadT*)v_grad_out = *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id);
+            *(LoadT*)v_grad_out_rotate = (hn_id + hn / 2 < hn) ? *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id + hn / 2) : *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            for (int vec_id = 0; vec_id < VEC; vec_id++) {
+                v_res_grad[vec_id] = v_grad_out[vec_id] * v_cos[vec_id] + v_grad_out_rotate[vec_id] * ((hn_id + hn / 2 < hn) ? v_sin[vec_id] : -v_sin[vec_id]);
+            }
+            *(LoadT*)res_grad(sq_id, b_id, head_id, hn_id) = *(LoadT*)v_res_grad;
         }
     }
 }
@@ -126,11 +141,15 @@ void host_apply_RoPE_backward_gpu(int sq, int b, int np, int hn,
                                   const scalar_t* grad_out, const scalar_t* cos,
                                   const scalar_t* sin, scalar_t* res_grad) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
-
     dim3 blocks(sq, b);
-    dim3 threads(BLOCK_HN, BLOCK_NP);
 
-    RoPE_backward_gpu_kernel<scalar_t><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
+    if(np <= 16) {
+        dim3 threads(16, 16);
+        RoPE_backward_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
+    } else {
+        dim3 threads(32, 32);
+        RoPE_backward_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
+    }
 }
 
 void RoPE_backward_gpu_launch(int sq, int b, int np, int hn,

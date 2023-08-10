@@ -169,7 +169,7 @@ if __name__ == '__main__':
     rotary_embedding = RotaryEmbedding(HP).cuda().float()
     cos, sin = rotary_embedding.forward(k, seq_len=SEQ_LEN)
 
-    for _ in range(10):
+    for _ in range(100):
         apply_rotary_pos_emb_index_fused(q, k, cos, sin, position_id)
         apply_rotary_pos_emb_index(q, k, cos, sin, position_id)
 
@@ -183,11 +183,11 @@ if __name__ == '__main__':
         q2, k2 = apply_rotary_pos_emb_index_fused(q, k, cos, sin, position_id)
         loss = 12 * (q2.mean() + k2.mean()) ** 2
         loss.backward()
-    gradq2, gradk2 = q.grad, k.grad
     torch.cuda.synchronize()
     end.record()
+    gradq2, gradk2 = q.grad, k.grad
 
-    print(f"custom_kernel time {start.elapsed_time(end)} ms")
+    print(f"custom_kernel time {start.elapsed_time(end)/RUNS} ms")
 
     start.record()
     for _ in range(RUNS):
@@ -196,11 +196,11 @@ if __name__ == '__main__':
         q1, k1 = apply_rotary_pos_emb_index(q, k, cos, sin, position_id)
         loss = 12 * (q1.mean() + k1.mean()) ** 2
         loss.backward()
-    gradq1, gradk1 = q.grad, k.grad
     torch.cuda.synchronize()
     end.record()
-
-    print(f"jit time {start.elapsed_time(end)} ms")
+    gradq1, gradk1 = q.grad, k.grad
+    
+    print(f"jit time {start.elapsed_time(end)/RUNS} ms")
 
     # q.grad = None
     # k.grad = None
