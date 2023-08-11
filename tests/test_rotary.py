@@ -159,14 +159,14 @@ if __name__ == '__main__':
     HP = HIDDEN // NHEADS
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
-    q = torch.randn((SEQ_LEN, BATCH_SIZE * NHEADS, HP)).cuda().float()
-    k = torch.randn((SEQ_LEN, BATCH_SIZE * NHEADS, HP)).cuda().float()
+    q = torch.randn((SEQ_LEN, BATCH_SIZE * NHEADS, HP)).cuda().float() # .half()
+    k = torch.randn((SEQ_LEN, BATCH_SIZE * NHEADS, HP)).cuda().float() # .half()
 
     q.requires_grad = True
     k.requires_grad = True
 
     position_id = torch.randint(0, SEQ_LEN, (SEQ_LEN, BATCH_SIZE)).cuda()
-    rotary_embedding = RotaryEmbedding(HP).cuda().float()
+    rotary_embedding = RotaryEmbedding(HP).cuda().float() # .half()
     cos, sin = rotary_embedding.forward(k, seq_len=SEQ_LEN)
 
     for _ in range(100):

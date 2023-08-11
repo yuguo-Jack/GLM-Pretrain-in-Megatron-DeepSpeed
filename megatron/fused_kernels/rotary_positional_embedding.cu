@@ -90,10 +90,10 @@ void host_apply_RoPE_gpu(int sq, int b, int np, int hn,
 
     if(np <= 16) {
         dim3 threads(16, 16);
-        RoPE_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
+        RoPE_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb); // defaut float, (16, 16, 1) for half
     } else {
         dim3 threads(32, 32);
-        RoPE_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb);
+        RoPE_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, Q, cos, sin, q_emb); // defaut float, (32, 32, 8) for half
     }
 
     
@@ -147,10 +147,10 @@ void host_apply_RoPE_backward_gpu(int sq, int b, int np, int hn,
 
     if(np <= 16) {
         dim3 threads(16, 16);
-        RoPE_backward_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
+        RoPE_backward_gpu_kernel<scalar_t, 16, 16, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad); // defaut float, (16, 16, 1) for half
     } else {
         dim3 threads(32, 32);
-        RoPE_backward_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad);
+        RoPE_backward_gpu_kernel<scalar_t, 32, 32, 4><<<blocks, threads, 0, stream>>>(sq, b, np, hn, grad_out, cos, sin, res_grad); // defaut float, (32, 32, 8) for half
     }
 }
 
