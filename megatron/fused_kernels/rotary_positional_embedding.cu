@@ -72,6 +72,7 @@ __global__ void RoPE_gpu_kernel(int sq, int b, int np, int hn,
             *(LoadT*)v_sin = *(LoadT*)sin(sq_id, b_id, hn_id);
             *(LoadT*)v_q = *(LoadT*)Q(sq_id, b_id, head_id, hn_id);
             *(LoadT*)v_q_rotate = (hn_id + hn / 2 < hn) ? *(LoadT*)Q(sq_id, b_id, head_id, hn_id + hn / 2) : *(LoadT*)Q(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            #pragma unroll
             for (int vec_id = 0; vec_id < VEC; vec_id++) {
                 v_q_emb[vec_id] = v_q[vec_id] * v_cos[vec_id] + ((hn_id + hn / 2 < hn) ? -v_q_rotate[vec_id] : v_q_rotate[vec_id]) * v_sin[vec_id];
             }
@@ -128,6 +129,7 @@ __global__ void RoPE_backward_gpu_kernel(int sq, int b, int np,
             *(LoadT*)v_sin = (hn_id + hn / 2 < hn) ? *(LoadT*)sin(sq_id, b_id, hn_id + hn / 2) : *(LoadT*)sin(sq_id, b_id, hn_id + hn / 2 - hn);
             *(LoadT*)v_grad_out = *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id);
             *(LoadT*)v_grad_out_rotate = (hn_id + hn / 2 < hn) ? *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id + hn / 2) : *(LoadT*)grad_out(sq_id, b_id, head_id, hn_id + hn / 2 - hn);
+            #pragma unroll
             for (int vec_id = 0; vec_id < VEC; vec_id++) {
                 v_res_grad[vec_id] = v_grad_out[vec_id] * v_cos[vec_id] + v_grad_out_rotate[vec_id] * ((hn_id + hn / 2 < hn) ? v_sin[vec_id] : -v_sin[vec_id]);
             }
