@@ -91,7 +91,7 @@ class RotaryPositionalEmbeddingFunction(torch.autograd.Function):
         cos_ = cos.contiguous()
         sin_ = sin.contiguous()
         output = rotary_positional_embedding_cuda.forward(*q.shape, q_, cos_, sin_)
-        ctx.save_for_backward(cos, sin)
+        ctx.save_for_backward(cos_, sin_)
 
         return output
 
@@ -187,7 +187,7 @@ if __name__ == '__main__':
     end.record()
     gradq2, gradk2 = q.grad, k.grad
 
-    print(f"custom_kernel time {start.elapsed_time(end)/RUNS} ms")
+    print(f"custom_kernel time {start.elapsed_time(end) / RUNS} ms")
 
     start.record()
     for _ in range(RUNS):
@@ -200,7 +200,7 @@ if __name__ == '__main__':
     end.record()
     gradq1, gradk1 = q.grad, k.grad
     
-    print(f"jit time {start.elapsed_time(end)/RUNS} ms")
+    print(f"jit time {start.elapsed_time(end) / RUNS} ms")
 
     # q.grad = None
     # k.grad = None
@@ -210,7 +210,7 @@ if __name__ == '__main__':
     # gradq1, gradk1 = q.grad, k.grad
 
     def rerr(x1, x2):
-        return ((x1 - x2) / (x1 + x2 + 1e-6)).abs().max()
+        return ((x1.float() - x2.float()) / (x1.float() + x2.float() + 1e-6)).abs().max()
 
     print(((q1 - q2).abs().max()))
     print(((k1 - k2).abs().max()))
