@@ -69,10 +69,10 @@ __global__ void FusedBiasGeGLU_gpu_kernel(int elem_cnt, scalar_t* out, const sca
     if(idx < elem_cnt / 2){
         int row_id = idx / (dim / 2);
         int col_id = idx % (dim / 2);
-        *(LoadT*)(v_in) = *(LoadT*)(in + row_id * dim + col_id);
-        *(LoadT*)(v_bias_in) = *(LoadT*)(bias + col_id);
-        *(LoadT*)(v_multiplier) = *(LoadT*)(in + row_id * dim + col_id + dim / 2);
-        *(LoadT*)(v_bias_multiplier) = *(LoadT*)(bias + col_id + dim / 2);
+        *(LoadT*)(v_in) = *(LoadT*)(in + row_id * dim + col_id + dim / 2);
+        *(LoadT*)(v_bias_in) = *(LoadT*)(bias + col_id + dim / 2);
+        *(LoadT*)(v_multiplier) = *(LoadT*)(in + row_id * dim + col_id);
+        *(LoadT*)(v_bias_multiplier) = *(LoadT*)(bias + col_id);
         #pragma unroll
         for(int i = 0; i < VEC; i++){
             v_out[i] = static_cast<scalar_t>(gelu_mul<acc_t>(static_cast<acc_t>(v_in[i] + v_bias_in[i]), 
@@ -86,7 +86,7 @@ template <typename scalar_t>
 void host_apply_FusedBiasGeGLU_gpu(int elem_cnt, scalar_t* out, const scalar_t* in, const scalar_t* bias, int dim) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     const int ThreadsPerBlock = REDUCE_BLOCK_SIZE;
-    int gridsize=(elem_cnt/2/VEC_n-1)/ThreadsPerBlock+1;
+    int gridsize = (elem_cnt / 2 / VEC_n - 1) / ThreadsPerBlock + 1;
     using T_ACC = at::acc_type<scalar_t, true>;
     FusedBiasGeGLU_gpu_kernel<scalar_t, T_ACC, VEC_n><<<gridsize, ThreadsPerBlock, 0, stream>>>(elem_cnt, out, in, bias, dim); 
 }
@@ -109,9 +109,9 @@ __device__ void gelu_mul_backward(acc_t& x_diff, acc_t& m_diff, acc_t dy, acc_t 
     // acc_t dtanh = alpha * (h * x + beta * one_h * pow3);
     // x_diff = (h + h * tanh_out + dtanh * (one - tanh_out * tanh_out)) * m * dy;
     m_diff = c10::cuda::compat::normcdf(x) * x * dy;
-    constexpr acc_t kBeta = M_2_SQRTPI * M_SQRT1_2 * 0.5;
+    constexpr acc_t kBeta = M_2_SQRTPI * M_SQRT1_2 * h;
     const acc_t cdf = c10::cuda::compat::normcdf(x);
-    const acc_t pdf = c10::cuda::compat::exp((acc_t)-0.5 * x * x) * kBeta;
+    const acc_t pdf = c10::cuda::compat::exp(-h * x * x) * kBeta;
     x_diff = dy * m * (cdf + x * pdf);
 }
 
@@ -129,10 +129,10 @@ __global__ void FusedBiasGeGLU_backward_gpu_kernel(int elem_cnt, scalar_t* in_gr
     if(idx < elem_cnt / 2){
         int row_id = idx / (dim / 2);
         int col_id = idx % (dim / 2);
-        *(LoadT*)(v_in) = *(LoadT*)(in + row_id * dim + col_id);
-        *(LoadT*)(v_bias_in) = *(LoadT*)(bias + col_id);
-        *(LoadT*)(v_multiplier) = *(LoadT*)(in + row_id * dim + col_id + dim / 2);
-        *(LoadT*)(v_bias_multiplier) = *(LoadT*)(bias + col_id + dim / 2);
+        *(LoadT*)(v_in) = *(LoadT*)(in + row_id * dim + col_id + dim / 2);
+        *(LoadT*)(v_bias_in) = *(LoadT*)(bias + col_id + dim / 2);
+        *(LoadT*)(v_multiplier) = *(LoadT*)(in + row_id * dim + col_id);
+        *(LoadT*)(v_bias_multiplier) = *(LoadT*)(bias + col_id);
         *(LoadT*)(v_out_grad) = *(LoadT*)(out_grad + row_id * dim / 2 + col_id);
         #pragma unroll
         for(int i = 0; i < VEC; i++){
@@ -143,8 +143,8 @@ __global__ void FusedBiasGeGLU_backward_gpu_kernel(int elem_cnt, scalar_t* in_gr
             v_in_grad[i] = static_cast<scalar_t>(x_diff);
             v_multiplier_grad[i] = static_cast<scalar_t>(m_diff);
         }
-        *(LoadT*)(in_grad + row_id * dim + col_id) = *(LoadT*)v_in_grad;
-        *(LoadT*)(in_grad + row_id * dim + col_id + dim / 2) = *(LoadT*)v_multiplier_grad;
+        *(LoadT*)(in_grad + row_id * dim + col_id + dim / 2) = *(LoadT*)v_in_grad;
+        *(LoadT*)(in_grad + row_id * dim + col_id) = *(LoadT*)v_multiplier_grad;
     }
 }
 
@@ -181,7 +181,7 @@ __global__ void col_wise_reduce(scalar_t *dst, const scalar_t *src, int M, int N
 template <typename scalar_t>
 void host_apply_FusedBiasGeGLU_backward_gpu(cudaStream_t stream, int elem_cnt, scalar_t* in_grad, scalar_t* bias_grad, const scalar_t* out_grad, const scalar_t* in, const scalar_t* bias, int dim) {
     const int ThreadsPerBlock = REDUCE_BLOCK_SIZE;
-    int gridsize=(elem_cnt/2/VEC_n-1)/ThreadsPerBlock+1;
+    int gridsize = (elem_cnt / 2 / VEC_n - 1) / ThreadsPerBlock + 1;
     int M = elem_cnt / dim;
     int B =(dim - 1) / kColwiseReduceTileSize + 1;
     using T_ACC = at::acc_type<scalar_t, true>;

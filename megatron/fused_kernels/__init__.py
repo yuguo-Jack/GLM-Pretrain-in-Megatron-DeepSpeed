@@ -100,6 +100,17 @@ def load(args):
                  srcpath / 'rotary_positional_embedding.cu']
         rotary_positional_embedding_cuda = _cpp_extention_load_helper(
             "rotary_positional_embedding_cuda", sources, extra_cuda_flags)
+        
+    # =================================
+    # Bias geglu/
+    # =================================
+
+    if args.fuse_bias_geglu:
+        extra_cuda_flags = []
+        sources=[srcpath / 'bias_geglu.cpp',
+                srcpath / 'bias_geglu.cu']
+        bias_geglu_cuda = _cpp_extention_load_helper(
+            "bias_geglu_cuda", sources, extra_cuda_flags)
 
 
 def _get_cuda_bare_metal_version(cuda_dir):

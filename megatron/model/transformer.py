@@ -26,6 +26,7 @@ from megatron.enums import AttnMaskType, LayerType, AttnType, PositionEmbeddingT
 from megatron.model.fused_layer_norm import MixedFusedLayerNorm as LayerNorm
 from megatron.model.fused_softmax import FusedScaleMaskSoftmax
 from megatron.model.fused_bias_gelu import bias_gelu_impl
+from megatron.model.fused_bias_geglu import FuseBiasGeGLU
 from megatron.model.utils import attention_mask_func, openai_gelu, erf_gelu, get_deepnorm_coefficients, init_method_normal
 from functools import partial
 
@@ -118,8 +119,13 @@ class ParallelMLP(MegatronModule):
 
         self.bias_gelu_fusion = args.bias_gelu_fusion
         self.activation_func = F.gelu
+        self.glu_activation = args.glu_activation
+        self.fuse_bias_geglu = args.fuse_bias_geglu
         if args.glu_activation:
-            self.activation_func = GLU_ACTIVATIONS[args.glu_activation]
+            if args.glu_activation == "geglu" and args.fuse_bias_geglu:
+                self.activation_func = FuseBiasGeGLU()
+            else:
+                self.activation_func = GLU_ACTIVATIONS[args.glu_activation]
         elif args.openai_gelu:
             self.activation_func = openai_gelu
         elif args.onnx_safe:
@@ -143,8 +149,12 @@ class ParallelMLP(MegatronModule):
              intermediate_parallel = \
                      bias_gelu_impl(intermediate_parallel, bias_parallel)
         else:
-            intermediate_parallel = \
-                self.activation_func(intermediate_parallel + bias_parallel)
+            if self.glu_activation == "geglu" and self.fuse_bias_geglu:
+                 intermediate_parallel = \
+                    self.activation_func(intermediate_parallel, bias_parallel)
+            else:
+                intermediate_parallel = \
+                    self.activation_func(intermediate_parallel + bias_parallel)
 
         # [s, b, h]
         output, output_bias = self.dense_4h_to_h(intermediate_parallel)

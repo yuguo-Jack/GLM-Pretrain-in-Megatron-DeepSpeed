@@ -91,6 +91,7 @@ GLM_ARGS="
     --apply-rotary-positional-embedding-kernel \
     --ffn-hidden-size $FFN_HIDDEN \
     --glu-activation geglu \
+    --fuse-bias-geglu \
     --no-bias-gelu-fusion \
     "
 

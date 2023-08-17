@@ -43,20 +43,21 @@ class FusedBiasGeGLUFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, bias):
         import bias_geglu_cuda
+        ctx.input_shape = input.shape
         input_ = input.contiguous()
         bias_ = bias.contiguous()
         output = bias_geglu_cuda.forward(input_, bias_)
-        ctx.save_for_backward(input_, bias_, input)
+        ctx.save_for_backward(input_, bias_)
 
         return output.view(*tuple(input.shape[:-1]), input.shape[-1] // 2)
 
     @staticmethod
     def backward(ctx, grad_output):
         import bias_geglu_cuda
-        input_, bias_, input = ctx.saved_tensors
+        input_, bias_ = ctx.saved_tensors
         input_grad, bias_grad = bias_geglu_cuda.backward(grad_output, input_, bias_)
 
-        return input_grad.view(input.shape), bias_grad, None, None
+        return input_grad.view(ctx.input_shape), bias_grad, None, None
     
 class FuseBiasGeGLU(torch.nn.Module):
 
@@ -86,8 +87,9 @@ if __name__ == '__main__':
     for _ in range(RUNS):
         fused = fuse_bias_geglu(x, bias)
         x_in = x + bias
-        input, mul = x_in.chunk(2, dim=-1)
-        expected = mul * F.gelu(input)
+        # mul, input = x_in.chunk(2, dim=-1)
+        # expected = mul * F.gelu(input)
+        expected = geglu(x_in)
 
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
@@ -110,8 +112,9 @@ if __name__ == '__main__':
         x.grad = None
         bias.grad = None
         x_in = x + bias
-        input, mul = x_in.chunk(2, dim=-1)
-        expected = mul * F.gelu(input)
+        # mul, input = x_in.chunk(2, dim=-1)
+        # expected = mul * F.gelu(input)
+        expected = geglu(x_in)
         expected.backward(grad)
     torch.cuda.synchronize()
     end.record()

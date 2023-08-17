@@ -645,6 +645,8 @@ def _add_training_args(parser):
                        help="Use to override the pipeline stages partitioning method. e.g., 'type:transformer|embedding'")
     group.add_argument('--apply-rotary-positional-embedding-kernel', action='store_true',
                        help='Use custom cuda kernel for rotary positional embedding.')
+    group.add_argument('--fuse-bias-geglu', action='store_true',
+                       help='Fuse bias geglu op.')
     group.add_argument('--use-hinge-cross-entropy-loss', action='store_true')
 
     return parser
