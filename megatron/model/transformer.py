@@ -40,6 +40,8 @@ from .positional_embeddings import apply_rotary_pos_emb_torch, apply_rotary_pos_
 from .gau import GatedAttentionUnit
 
 from lightop import op
+from lightop.scaled_masked_softmax_dropout import FusedScaleMaskSoftmaxDropout
+from lightop.scaled_masked_softmax_dropout import FuseAttnMaskType
 from apex.normalization import MixedFusedRMSNorm as RMSNorm
 
 # flags required to enable jit fusion kernels
@@ -296,6 +298,16 @@ class ParallelAttention(MegatronModule):
             attention_mask_func,
             self.attention_softmax_in_fp32,
             coeff)
+        
+        self.scale_mask_softmax_dropout = FusedScaleMaskSoftmaxDropout(
+                        self.fp16, self.bf16,
+                        mask_func=attention_mask_func,
+                        scale=coeff,
+                        softmax_in_fp32=self.attention_softmax_in_fp32,
+                        attn_mask_type=FuseAttnMaskType.padding,
+                        scaled_masked_softmax_fusion=args.masked_softmax_fusion,
+                        p = args.attention_dropout
+                    )
 
         # Dropout. Note that for a single iteration, this layer will generate
         # different outputs on different number of parallel partitions but
@@ -589,13 +601,15 @@ class ParallelAttention(MegatronModule):
         # ===========================
 
         # attention scores and attention mask [b, np, sq, sk]
-        attention_probs = self.scale_mask_softmax(attention_scores,
-                                                  attention_mask)
+        # attention_probs = self.scale_mask_softmax(attention_scores,
+        #                                           attention_mask)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         with mpu.get_cuda_rng_tracker().fork():
-            attention_probs = self.attention_dropout(attention_probs)
+        #     attention_probs = self.attention_dropout(attention_probs)
+            attention_probs = self.scale_mask_softmax_dropout(attention_scores,
+                                                              attention_mask)
 
         # =========================
         # Context layer. [sq, b, hp]
