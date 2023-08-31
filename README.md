@@ -41,7 +41,11 @@ bash creat-data.sh # 数据预处理
 sbatch dcu_run.sh
 ```
 
-稍后更新精度。
+采用悟道数据集的GLM-130B配置参考wudao_dcu_single.sh，loss曲线如下：
+
+![GLM-130B loss](https://github.com/yuguo-Jack/GLM-Pretrain-in-Megatron-DeepSpeed/blob/main/GLM-130B%20loss.png)
+
+后续更新收敛情况。
 
 ## 参考
 
