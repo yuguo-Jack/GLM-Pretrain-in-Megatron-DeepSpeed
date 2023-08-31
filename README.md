@@ -35,7 +35,7 @@ pip3 install icetk -i https://mirrors.aliyun.com/pypi/simple
 bash creat-data.sh # 数据预处理
 ```
 
-运行 GLM-11B 预训练。由于当前添加了 GQA，所以参数量会有减少。可以通过设置 NUM_KV_HEADS 等于 NHEADS 来使用 MHA。需要注意的是，在 Megatron 中只有 TP=1 时，NUM_KV_HEADS 才可以设置成1，等价于 MQA。 具体参数配置更改可以参考 dcu_single.sh。
+运行 GLM-11B 预训练。由于当前添加了 GQA，所以参数量会有减少。可以通过设置 NUM_KV_HEADS 等于 NHEADS 来使用 MHA。需要注意的是，在 Megatron 中只有 TP=1 时，NUM_KV_HEADS 才可以设置成1，等价于 MQA。 具体参数配置更改可以参考 dcu_single.sh。加入fused RoPE，fused bias geglu等，可以参考commit记录使用。
 
 ```
 sbatch dcu_run.sh
