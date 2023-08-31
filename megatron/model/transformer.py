@@ -601,15 +601,15 @@ class ParallelAttention(MegatronModule):
         # ===========================
 
         # attention scores and attention mask [b, np, sq, sk]
-        # attention_probs = self.scale_mask_softmax(attention_scores,
-        #                                           attention_mask)
+        attention_probs = self.scale_mask_softmax(attention_scores,
+                                                  attention_mask)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         with mpu.get_cuda_rng_tracker().fork():
-        #     attention_probs = self.attention_dropout(attention_probs)
-            attention_probs = self.scale_mask_softmax_dropout(attention_scores,
-                                                              attention_mask)
+            attention_probs = self.attention_dropout(attention_probs)
+            # attention_probs = self.scale_mask_softmax_dropout(attention_scores,
+            #                                                   attention_mask)
 
         # =========================
         # Context layer. [sq, b, hp]
